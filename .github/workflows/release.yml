@@ -1,0 +1,167 @@
+name: Release Publish
+
+# Entrypoints:
+#   1. push of tag v* — straight release publish
+#   2. workflow_dispatch with version_bump — compute next tag, push it, publish
+# Publishes to Maven Central Portal (releases) + GitHub Packages (fallback).
+# Generic — works in any <step>-input-court repo unchanged.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options: [patch, minor, major, manual]
+      manual_version:
+        description: 'Manual version (only if "manual", e.g. 1.2.3)'
+        required: false
+        type: string
+
+jobs:
+  tag:
+    name: Compute & push tag
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.compute.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Compute and push new tag
+        id: compute
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          VERSION=${LATEST_TAG#v}
+          IFS='.' read -r -a P <<< "$VERSION"
+          MAJOR="${P[0]:-0}"; MINOR="${P[1]:-0}"; PATCH="${P[2]:-0}"
+          case "${{ github.event.inputs.version_bump }}" in
+            manual) NEW_VERSION="${{ github.event.inputs.manual_version }}";
+                    [ -z "$NEW_VERSION" ] && { echo "manual_version required"; exit 1; } ;;
+            major)  NEW_VERSION="$((MAJOR + 1)).0.0" ;;
+            minor)  NEW_VERSION="${MAJOR}.$((MINOR + 1)).0" ;;
+            patch|*) NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+          esac
+          NEW_TAG="v${NEW_VERSION}"
+          git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
+          git push origin "$NEW_TAG"
+          echo "tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build
+    needs: [tag]
+    if: always() && (needs.tag.result == 'success' || needs.tag.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.tag.outputs.tag || github.ref }}
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Build
+        run: ./gradlew build --no-daemon
+      - name: Report jar size
+        run: |
+          JAR=$(ls build/libs/*.jar | grep -vE -- '-sources|-javadoc' | head -1)
+          SIZE_MB=$(( $(stat -c%s "$JAR") / 1024 / 1024 ))
+          echo "Main jar: $JAR = ${SIZE_MB} MB"
+          [ "$SIZE_MB" -gt 950 ] && echo "::warning::Jar ${SIZE_MB} MB near Central's 1 GB limit" || true
+
+  publish-central:
+    name: Publish to Maven Central (release)
+    needs: [tag, build]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.tag.outputs.tag || github.ref }}
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Publish release to Central Portal
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: ./gradlew publishAllPublicationsToCentralPortal --no-daemon --stacktrace
+
+  publish-github-packages:
+    name: Publish to GitHub Packages (release)
+    needs: [tag, build]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.tag.outputs.tag || github.ref }}
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Publish release to GitHub Packages
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace
+
+  github-release:
+    name: Create GitHub Release
+    needs: [tag, publish-central, publish-github-packages]
+    if: always() && needs.build.result != 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.tag.outputs.tag || github.ref }}
+      - name: Extract version
+        id: version
+        run: |
+          TAG_REF="${{ needs.tag.outputs.tag || github.ref_name }}"
+          echo "tag=$TAG_REF" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG_REF#v}" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}

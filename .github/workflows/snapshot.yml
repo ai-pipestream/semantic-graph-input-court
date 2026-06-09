@@ -1,0 +1,92 @@
+name: Snapshot Publish
+
+# On push to main, publish an X.Y.Z-SNAPSHOT to Maven Central Portal snapshots
+# (primary) and GitHub Packages (fallback). The two targets run as independent
+# jobs so a Central rejection (e.g. size) still lands the GitHub Packages copy.
+# Generic — works in any <step>-input-court repo unchanged.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Build
+        run: ./gradlew build --no-daemon
+      - name: Report jar size
+        run: |
+          JAR=$(ls build/libs/*.jar | grep -vE -- '-sources|-javadoc' | head -1)
+          SIZE_MB=$(( $(stat -c%s "$JAR") / 1024 / 1024 ))
+          echo "Main jar: $JAR = ${SIZE_MB} MB"
+          [ "$SIZE_MB" -gt 950 ] && echo "::warning::Jar ${SIZE_MB} MB near Central's 1 GB limit" || true
+
+  publish-central:
+    name: Publish to Maven Central (snapshots)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Publish snapshot to Central Portal
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: ./gradlew publishAllPublicationsToCentralPortalSnapshots --no-daemon --stacktrace
+
+  publish-github-packages:
+    name: Publish to GitHub Packages (snapshots)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Publish snapshot to GitHub Packages
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon --continue || true

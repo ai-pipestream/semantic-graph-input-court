@@ -118,3 +118,21 @@ nmcp {
 afterEvaluate {
     tasks.matching { it.name.startsWith("nmcp") }.configureEach { it.dependsOn(tasks.withType(Sign)) }
 }
+
+// PR-gate sanity check (invoked by .github/workflows/validate.yml): confirms the
+// publish wiring is intact without uploading. Generic — no hardcoded names.
+tasks.register('validatePublish') {
+    group = 'verification'
+    description = 'Verify required publish tasks + POM fields are configured'
+    doLast {
+        def required = ['publishAllPublicationsToCentralPortal',
+                        'publishAllPublicationsToCentralPortalSnapshots',
+                        'publishAllPublicationsToMavenLocalRepository']
+        def missing = required.findAll { tasks.findByName(it) == null }
+        if (!missing.isEmpty()) throw new GradleException("Missing publish tasks: ${missing}")
+        def pub = publishing.publications.findByName('maven')
+        if (pub == null) throw new GradleException("Maven publication 'maven' is not configured")
+        if (pub.pom.url.getOrNull() == null) throw new GradleException("POM url is not set")
+        logger.lifecycle("validatePublish: OK (artifact=${project.name}, version=${project.version})")
+    }
+}
