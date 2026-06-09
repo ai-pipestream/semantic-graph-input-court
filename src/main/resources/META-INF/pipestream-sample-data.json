@@ -1,0 +1,12 @@
+{
+  "artifactId": "semantic-graph-input-court",
+  "stage": "semantic-graph",
+  "producedByModule": "embedder",
+  "consumedByModule": "semantic-graph",
+  "captureNode": "semantic-graph",
+  "crawlId": "b93580d2-92d2-4940-8fa4-2d05532ad046",
+  "sourceDocCount": 1000,
+  "format": "one gzip-compressed serialized ai.pipestream.data.v1.PipeDoc per file",
+  "path": "fixtures/court/semantic-graph/doc_NNNN.pb.gz",
+  "pairing": "doc_NNNN is stable across steps by sorted doc_id; see index_<step>.tsv"
+}
