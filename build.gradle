@@ -1,0 +1,120 @@
+// Generic step-input fixture artifact — COPY THIS FILE VERBATIM into any
+// <step>-input-court repo. Nothing here is hardcoded to a step: the artifactId,
+// POM urls, and description all derive from the repo/directory name via
+// rootProject.name (set to settingsDir.name in settings.gradle).
+//
+// Ships one gzipped ai.pipestream.data.v1.PipeDoc per source doc under
+// src/main/resources/fixtures/court/<step>/doc_NNNN.pb.gz — the captured INPUT
+// to <step>, harvested from a from-scratch e2e crawl. Consumers add this as a
+// test-scope dependency and read the resources for stress / regression tests.
+
+plugins {
+    id 'pl.allegro.tech.build.axion-release' version '1.21.0'
+    id 'com.gradleup.nmcp' version '1.2.0'
+    id 'java'
+    id 'maven-publish'
+    id 'signing'
+}
+
+scmVersion {
+    tag { prefix = 'v' }
+    checks {
+        uncommittedChanges = false
+        aheadOfRemote = false
+        snapshotDependencies = false
+    }
+}
+
+group = 'ai.pipestream'
+version = scmVersion.version
+
+// Derive the step name from the repo name: "chunker-input-court" -> "chunker".
+def stepName = rootProject.name.replaceAll('-input-court.*$', '')
+description = "CourtListener PipeDocs captured as the INPUT to the ${stepName} step — " +
+        "one gzipped ai.pipestream.data.v1.PipeDoc per source doc. Drop-in stress / " +
+        "regression fixture for the ${stepName} module."
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+    withSourcesJar()
+    withJavadocJar()
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+// java plugin already copies src/main/resources/** into the jar; do NOT add a
+// jar { from(...) } block (it duplicates entries). Just pin the base name.
+tasks.named('jar').configure { archiveBaseName = rootProject.name }
+
+// The fixtures live ONLY in the main jar. Maven Central requires a sources jar,
+// but duplicating ~1 GB of .pb.gz into it would double the upload and blow the
+// ~1 GB bundle limit — so exclude the data from sources/javadoc artifacts.
+tasks.named('sourcesJar').configure { exclude 'fixtures/**', 'META-INF/pipestream-sample-data.json' }
+
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+tasks.withType(Javadoc).configureEach {
+    options.encoding = 'UTF-8'
+    options.charSet = 'UTF-8'
+    options.addStringOption('Xdoclint:-missing', '-quiet')
+}
+
+def repoUrl = "https://github.com/ai-pipestream/${rootProject.name}"
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            from components.java
+            pom {
+                name = project.name
+                description = project.description
+                url = repoUrl
+                licenses { license { name = 'MIT License'; url = 'https://opensource.org/licenses/MIT' } }
+                developers { developer { id = 'krickert'; name = 'Pipestream Engine Team' } }
+                scm {
+                    connection = "scm:git:${repoUrl}.git"
+                    developerConnection = "scm:git:ssh://git@github.com/ai-pipestream/${rootProject.name}.git"
+                    url = repoUrl
+                }
+            }
+        }
+    }
+    repositories {
+        mavenLocal()
+        if (System.getenv("GITHUB_ACTOR") != null) {
+            maven {
+                name = 'GitHubPackages'
+                url = uri("https://maven.pkg.github.com/ai-pipestream/${rootProject.name}")
+                credentials {
+                    username = System.getenv("GITHUB_ACTOR")
+                    password = System.getenv("GITHUB_TOKEN")
+                }
+            }
+        }
+    }
+}
+
+signing {
+    def signingKey = System.getenv("GPG_PRIVATE_KEY") ?: System.getenv("GPG_SIGNING_KEY")
+    def signingPassword = System.getenv("GPG_PASSPHRASE") ?: System.getenv("GPG_SIGNING_PASSPHRASE")
+    required { signingKey != null }
+    if (signingKey && signingPassword) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
+        sign publishing.publications.maven
+    }
+}
+
+nmcp {
+    publishAllPublicationsToCentralPortal {
+        username = providers.environmentVariable("MAVEN_CENTRAL_USERNAME")
+        password = providers.environmentVariable("MAVEN_CENTRAL_PASSWORD")
+        publishingType = "AUTOMATIC"
+    }
+}
+
+afterEvaluate {
+    tasks.matching { it.name.startsWith("nmcp") }.configureEach { it.dependsOn(tasks.withType(Sign)) }
+}

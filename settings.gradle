@@ -1,0 +1,17 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+// Generic: the artifact name is the repo/directory name. Copy this file
+// verbatim into any <step>-input-court-1000 repo — no edits needed.
+rootProject.name = settingsDir.name
+
+dependencyResolutionManagement {
+    repositories {
+        mavenLocal()
+        mavenCentral()
+    }
+}
