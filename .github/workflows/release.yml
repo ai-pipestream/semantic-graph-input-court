@@ -7,8 +7,9 @@ name: Release Publish
 # Generic — works in any <step>-input-court repo unchanged.
 
 on:
-  push:
-    tags: ['v*']
+  # dispatch-only: the tag/build/publish/release jobs are needs-chained in one run.
+  # (A push:tags trigger would double-fire on the tag this workflow pushes — Forgejo
+  # doesn't suppress token-pushed tags like GitHub does.)
   workflow_dispatch:
     inputs:
       version_bump:
