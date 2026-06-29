@@ -112,56 +112,26 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: ./gradlew publishAllPublicationsToCentralPortal --no-daemon --stacktrace
 
-  publish-github-packages:
-    name: Publish to GitHub Packages (release)
-    needs: [tag, build]
-    if: always() && needs.build.result == 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.tag.outputs.tag || github.ref }}
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-      - name: Publish release to GitHub Packages
-        env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-        run: ./gradlew publishAllPublicationsToGitHubPackagesRepository --no-daemon --stacktrace
-
   github-release:
-    name: Create GitHub Release
-    needs: [tag, publish-central, publish-github-packages]
-    if: always() && needs.build.result != 'failure'
+    name: Create Forgejo Release
+    needs: [tag, publish-central]
+    if: always() && needs.publish-central.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.tag.outputs.tag || github.ref }}
       - name: Extract version
         id: version
         run: |
           TAG_REF="${{ needs.tag.outputs.tag || github.ref_name }}"
           echo "tag=$TAG_REF" >> "$GITHUB_OUTPUT"
           echo "version=${TAG_REF#v}" >> "$GITHUB_OUTPUT"
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Release ${{ steps.version.outputs.version }}
-          generate_release_notes: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Forgejo release object
+        # softprops/action-gh-release targets github.com; on Forgejo use the API directly (non-fatal).
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"tag_name":"${{ steps.version.outputs.tag }}","name":"Release ${{ steps.version.outputs.version }}"}' \
+            "${{ github.api_url }}/repos/${{ github.repository }}/releases" \
+            && echo "Forgejo release created" || echo "release-object skipped (non-fatal)"
