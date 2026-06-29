@@ -5,9 +5,11 @@ pluginManagement {
     }
 }
 
-// Generic: the artifact name is the repo/directory name. Copy this file
-// verbatim into any <step>-input-court-1000 repo — no edits needed.
-rootProject.name = settingsDir.name
+// Artifact coordinates, POM, version derivation and step name all derive from this, so
+// set it explicitly per repo. Do NOT derive it from settingsDir.name: a host-mode CI
+// runner checks the repo out into its own workspace dir (e.g. "hostexecutor"), which
+// would silently publish every repo under that one bogus coordinate.
+rootProject.name = 'semantic-graph-input-court'
 
 dependencyResolutionManagement {
     repositories {
