@@ -38,6 +38,10 @@ src/main/resources/fixtures/court/index_<step>.tsv       # doc_NNNN -> doc_id
 
 `ai.pipestream:<repo-name>:<version>` (artifactId = repo name; version from git tag).
 
+Snapshots publish to Maven Central snapshots automatically on every push to `main`
+(`snapshot.yml`); releases are cut via the version-bump dispatch (`release.yml`), which
+the CICD computes, tags, and publishes — never tag by hand.
+
 ## How the data is (re)generated — not by hand
 
 Always from a **from-scratch** full-persist e2e crawl. The control scripts live in
