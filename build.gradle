@@ -9,7 +9,7 @@
 // test-scope dependency and read the resources for stress / regression tests.
 
 plugins {
-    id 'pl.allegro.tech.build.axion-release' version '1.21.0'
+    id 'pl.allegro.tech.build.axion-release' version '1.21.2'
     id 'com.gradleup.nmcp' version '1.2.0'
     id 'java'
     id 'maven-publish'
